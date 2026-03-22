@@ -11,18 +11,18 @@ import (
 )
 
 // testHandler 是一个简单的测试处理器，它读取所有输入并回写 "OK:" + 内容
-func testHandler(stream network.Stream) error {
+func testHandler(stream *network.NetCtx) error {
 	// 读取一部分数据来验证头部是否被正确缓冲并传递
-	buf := make([]byte, 1024)
-	n, err := stream.Read(buf)
-	if err != nil && n == 0 {
+	message := stream.Message
+	buf, err := message.ParseToBytes()
+	if err != nil {
 		return err
 	}
 
 	// 简单回显逻辑，实际业务可能更复杂
-	response := append([]byte("OK:"), buf[:n]...)
+	response := append([]byte("OK:"), buf[:]...)
 
-	_, writeErr := stream.Write(response)
+	_, writeErr := stream.Stream.Write(response)
 	return writeErr
 }
 
@@ -46,7 +46,7 @@ func TestTcpUdpGroup_TCP(t *testing.T) {
 
 	// 构造消息：前 20 字节为 HandlerName，补足 256 字节头部，后跟实际负载
 	payload := []byte("Hello TCP Server")
-	header := &Header{RouteName: handlerName, PayLoadLength: uint(len(payload))}
+	header := &network.Header{RouteName: handlerName, PayLoadLength: uint(len(payload))}
 
 	headerBytes, err := header.ParseToBytes()
 	if err != nil {
@@ -82,6 +82,65 @@ func TestTcpUdpGroup_TCP(t *testing.T) {
 	group.Close()
 }
 
+func TestTcpUdpGroup_TCP_KeepAlive(t *testing.T) {
+	addr := "127.0.0.1:8891"
+	group := NewTcpUdpGroup(addr)
+
+	// 注册测试 Handler
+	handlerName := "KEEPALIVE_TEST_HANDLER_"
+	group.RegisterHandler(handlerName, testHandler)
+
+	// 给服务器一点时间启动监听
+	time.Sleep(500 * time.Millisecond)
+
+	// 客户端逻辑：建立一条持久连接
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("TCP 连接失败：%v", err)
+	}
+
+	t.Log("=== 开始同连接连续发送测试 ===")
+
+	// 连续发送 3 次请求
+	for i := 1; i <= 3; i++ {
+		t.Logf("--- 第 %d 次请求 ---", i)
+
+		// 构造消息
+		payload := []byte(fmt.Sprintf("KeepAlive Message Round %d", i))
+		header := &network.Header{RouteName: handlerName, PayLoadLength: uint(len(payload))}
+
+		headerBytes, err := header.ParseToBytes()
+		if err != nil {
+			t.Fatalf("第 %d 次 Header 构造失败：%v", i, err)
+		}
+		messages := append(headerBytes, payload...)
+
+		// 发送数据
+		_, err = conn.Write(messages)
+		if err != nil {
+			t.Fatalf("第 %d 次 TCP 发送失败：%v", i, err)
+		}
+
+		// 读取响应
+		respBuf := make([]byte, 1024)
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := conn.Read(respBuf)
+		if err != nil {
+			t.Fatalf("第 %d 次 TCP 读取响应失败：%v", i, err)
+		}
+
+		// 验证响应
+		if !strings.HasPrefix(string(respBuf[:n]), "OK:") {
+			t.Errorf("第 %d 次响应不符合预期，收到：%s", i, string(respBuf[:n]))
+		} else {
+			t.Logf("第 %d 次请求成功，收到响应：%s", i, string(respBuf[:n]))
+		}
+	}
+	conn.Close()
+	group.Close()
+	t.Log("=== 同连接连续发送测试完成 ===")
+}
+
 func TestTcpUdpGroup_UDP(t *testing.T) {
 	addr := "127.0.0.1:8889"
 	group := NewTcpUdpGroup(addr)
@@ -106,7 +165,7 @@ func TestTcpUdpGroup_UDP(t *testing.T) {
 
 	// 构造消息：必须 >= 256 字节，前 20 字节为 HandlerName
 	payload := []byte("Hello UDP Server")
-	h := &Header{
+	h := &network.Header{
 		RouteName:     handlerName,
 		PayLoadLength: uint(len(payload)),
 		OriginData:    nil,
@@ -161,7 +220,7 @@ func TestTcpUdpGroup_Alternating(t *testing.T) {
 		}
 
 		tcpPayload := []byte(fmt.Sprintf("TCP Message Round %d", i+1))
-		tcpHeader := &Header{RouteName: handlerName, PayLoadLength: uint(len(tcpPayload))}
+		tcpHeader := &network.Header{RouteName: handlerName, PayLoadLength: uint(len(tcpPayload))}
 		tcpHeaderBytes, err := tcpHeader.ParseToBytes()
 		if err != nil {
 			tcpConn.Close()
@@ -201,7 +260,7 @@ func TestTcpUdpGroup_Alternating(t *testing.T) {
 		}
 
 		udpPayload := []byte(fmt.Sprintf("UDP Message Round %d", i+1))
-		udpHeader := &Header{RouteName: handlerName, PayLoadLength: uint(len(udpPayload))}
+		udpHeader := &network.Header{RouteName: handlerName, PayLoadLength: uint(len(udpPayload))}
 		udpHeaderBytes, err := udpHeader.ParseToBytes()
 		if err != nil {
 			udpConn.Close()

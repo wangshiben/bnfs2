@@ -11,4 +11,13 @@ type Stream interface {
 	Close() error
 	// send And Recive Message
 	SendMessage(ctx context.Context, message []byte) ([]byte, error)
+	NextMessage() *Message
 }
+
+type NetCtx struct {
+	Stream  Stream
+	Message *Message
+}
+
+// 处理连接函数
+type Handler func(ctx *NetCtx) error

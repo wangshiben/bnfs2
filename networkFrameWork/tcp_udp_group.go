@@ -14,9 +14,10 @@ import (
 // TcpUdpGroup 实现 NetWorkGroup 接口，支持单端口同时监听 TCP 和 UDP
 type TcpUdpGroup struct {
 	addr        string
-	handlers    map[string]Handler // 修改为地图以支持多个 Handler
+	handlers    map[string]network.Handler // 修改为map以支持多个 Handler
 	listeners   []net.Listener
 	packetConns []net.PacketConn
+	tcpConns    []net.Conn
 	ctx         context.Context
 	cancel      context.CancelFunc
 	wg          sync.WaitGroup
@@ -38,6 +39,26 @@ func NewTcpUdpGroup(addr string) *TcpUdpGroup {
 func (g *TcpUdpGroup) Addr() string {
 	return g.addr
 }
+func (g *TcpUdpGroup) ContinueCall(stream network.Stream) {
+	for {
+		message := stream.NextMessage()
+		if message == nil {
+			// ConnectionClosed
+			return
+		}
+		g.mu.RLock()
+		handler := g.handlers[message.Header.RouteName]
+		g.mu.RUnlock()
+		err := handler(&network.NetCtx{
+			Stream:  stream,
+			Message: message,
+		})
+		if err != nil {
+			return
+		}
+	}
+
+}
 
 // ReceiveStream 此方法在并发监听模型下不适用，因为连接是异步到达的。
 // 该接口定义可能更偏向于拉取模式，但在监听服务器模式下，我们通过注册 Handler 来推送处理。
@@ -47,7 +68,7 @@ func (g *TcpUdpGroup) ReceiveStream() network.Stream {
 }
 
 // GetHandler 根据路由名称获取处理器
-func (g *TcpUdpGroup) GetHandler(routeName string) Handler {
+func (g *TcpUdpGroup) GetHandler(routeName string) network.Handler {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if g.handlers == nil {
@@ -57,10 +78,10 @@ func (g *TcpUdpGroup) GetHandler(routeName string) Handler {
 }
 
 // RegisterHandler 注册处理函数，并启动监听
-func (g *TcpUdpGroup) RegisterHandler(handlerName string, handler Handler) {
+func (g *TcpUdpGroup) RegisterHandler(handlerName string, handler network.Handler) {
 	g.mu.Lock()
 	if g.handlers == nil {
-		g.handlers = make(map[string]Handler)
+		g.handlers = make(map[string]network.Handler)
 	}
 	g.handlers[handlerName] = handler
 	g.mu.Unlock()
@@ -132,7 +153,7 @@ func (g *TcpUdpGroup) acceptTcpLoop(listener net.Listener) {
 			// 记录日志：读取头部失败
 			continue
 		}
-		header, err := ParseHeader(headerBuf)
+		header, err := network.ParseHeader(headerBuf)
 		if err != nil {
 			return
 		}
@@ -157,19 +178,29 @@ func (g *TcpUdpGroup) acceptTcpLoop(listener net.Listener) {
 			continue
 		}
 		// 创建带缓冲的流，将已读取的 256 字节放回流中，以便 Handler 能读到完整数据
-		stream := &bufferedStream{
-			Stream: &tcpStream{Conn: conn},
-			buffer: append(headerBuf, PayLoad...),
+		//stream := &bufferedStream{
+		//	Stream: &tcpStream{Conn: conn},
+		//	buffer: append(headerBuf, PayLoad...),
+		//}
+		message, err := network.ParseMessage(append(headerBuf, PayLoad...))
+		if err != nil {
+			return
 		}
 
 		g.connWg.Add(1)
 		go func() {
 			defer g.connWg.Done()
-			if err := handler(stream); err != nil {
+			tcpS := &tcpStream{Conn: conn}
+			if err := handler(&network.NetCtx{
+				Stream:  tcpS,
+				Message: message,
+			}); err != nil {
 				// 可选：记录错误日志
 			}
+			g.tcpConns = append(g.tcpConns, conn)
 			// 处理完成后，关闭连接以发送 FIN，避免客户端收到 RST
-			conn.Close()
+			g.ContinueCall(tcpS)
+			//conn.Close()
 		}()
 	}
 }
@@ -206,13 +237,12 @@ func (g *TcpUdpGroup) readUdpLoop(conn *net.UDPConn) {
 				continue
 			}
 
-			headerBuf := make([]byte, 256)
-			copy(headerBuf, buffer[:256])
-			header, err := ParseHeader(headerBuf)
+			message, err := network.ParseMessage(buffer[:n])
 			if err != nil {
 				return
 			}
-			routeName := header.RouteName
+
+			routeName := message.Header.RouteName
 
 			g.mu.RLock()
 			handler := g.handlers[routeName]
@@ -240,14 +270,17 @@ func (g *TcpUdpGroup) readUdpLoop(conn *net.UDPConn) {
 
 			stream = &bufferedUdpStream{
 				Stream: udpStreamBase,
-				buffer: headerBuf,
+				buffer: buffer[:n],
 			}
 			streamMap[addrKey] = stream
 
 			g.connWg.Add(1)
 			go func(s *bufferedUdpStream, key string) {
 				defer g.connWg.Done()
-				if err := handler(s); err != nil {
+				if err := handler(&network.NetCtx{
+					Stream:  udpStreamBase,
+					Message: message,
+				}); err != nil {
 					mapMu.Lock()
 					delete(streamMap, key)
 					mapMu.Unlock()
@@ -286,6 +319,9 @@ func (g *TcpUdpGroup) Close() error {
 		if err := l.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	for _, conn := range g.tcpConns {
+		conn.Close()
 	}
 	for _, p := range g.packetConns {
 		if err := p.Close(); err != nil {
@@ -326,6 +362,27 @@ func (t *tcpStream) SendMessage(ctx context.Context, message []byte) ([]byte, er
 	}
 	return buf[:n], nil
 }
+func (t *tcpStream) NextMessage() *network.Message {
+	headerRead := make([]byte, 256)
+	_, err := io.ReadFull(t.Conn, headerRead)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	header, err := network.ParseHeader(headerRead)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	payLoad := make([]byte, header.PayLoadLength)
+	_, err = io.ReadFull(t.Conn, payLoad)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	return &network.Message{Header: header, Payload: payLoad}
+
+}
 
 // udpStream 模拟 UDP 的流式接口
 type udpStream struct {
@@ -365,6 +422,26 @@ func (u *udpStream) Close() error {
 	}
 	return nil
 }
+func (u *udpStream) NextMessage() *network.Message {
+	headerRead := make([]byte, 256)
+	_, err := io.ReadFull(u.conn, headerRead)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	header, err := network.ParseHeader(headerRead)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	payLoad := make([]byte, header.PayLoadLength)
+	_, err = io.ReadFull(u.conn, payLoad)
+	if err != nil {
+		log.Println("ERROR:" + err.Error())
+		return nil
+	}
+	return &network.Message{Header: header, Payload: payLoad}
+}
 
 func (u *udpStream) SendMessage(ctx context.Context, message []byte) ([]byte, error) {
 	// 发送
@@ -401,6 +478,16 @@ func (b *bufferedStream) Read(p []byte) (n int, err error) {
 	// 缓冲区读完，直接读取底层流
 	return b.Stream.Read(p)
 }
+func (b *bufferedStream) NextMessage() *network.Message {
+	if b.offset != len(b.buffer) {
+		message, err := network.ParseMessage(b.buffer)
+		if err != nil {
+			return nil
+		}
+		return message
+	}
+	return b.Stream.NextMessage()
+}
 
 // 确保其他方法透传
 func (b *bufferedStream) SendMessage(ctx context.Context, message []byte) ([]byte, error) {
@@ -425,4 +512,14 @@ func (b *bufferedUdpStream) Read(p []byte) (n int, err error) {
 
 func (b *bufferedUdpStream) SendMessage(ctx context.Context, message []byte) ([]byte, error) {
 	return b.Stream.SendMessage(ctx, message)
+}
+func (b *bufferedUdpStream) NextMessage() *network.Message {
+	if b.offset != len(b.buffer) {
+		message, err := network.ParseMessage(b.buffer)
+		if err != nil {
+			return nil
+		}
+		return message
+	}
+	return b.Stream.NextMessage()
 }

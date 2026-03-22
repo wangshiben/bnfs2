@@ -1,4 +1,4 @@
-package networkFrameWork
+package network
 
 import (
 	"encoding/binary"
@@ -9,6 +9,10 @@ type Header struct {
 	RouteName     string
 	PayLoadLength uint
 	OriginData    []byte
+}
+type Message struct {
+	Header  *Header
+	Payload []byte
 }
 
 const MagicHeader = "bnfs-data"
@@ -100,4 +104,23 @@ func (h *Header) ParseToBytes() ([]byte, error) {
 	// 剩余部分默认为 0，无需额外操作，因为 make 初始化即为 0
 
 	return headerBytes, nil
+}
+
+func (m *Message) ParseToBytes() ([]byte, error) {
+	m.Header.PayLoadLength = uint(len(m.Payload))
+	headerBytes, err := m.Header.ParseToBytes()
+	if err != nil {
+		return nil, err
+	}
+	return append(headerBytes, m.Payload...), nil
+}
+func ParseMessage(messageBytes []byte) (*Message, error) {
+	header, err := ParseHeader(messageBytes[:HeaderLength])
+	if err != nil {
+		return nil, err
+	}
+	return &Message{
+		Header:  header,
+		Payload: messageBytes[HeaderLength:],
+	}, nil
 }

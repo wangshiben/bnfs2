@@ -10,7 +10,7 @@ type KvDBImp struct {
 	db *badger.DB
 }
 
-const storeLocation = "sliceLocation"
+const StoreLocation = "sliceLocation"
 
 // New 创建一个新的 KvDB 实例
 // path: db 文件存储的路径
@@ -26,7 +26,7 @@ func New(path string) (KvDB, error) {
 		return nil, err
 	}
 	k := &KvDBImp{db: db}
-	k.Put(storeLocation, DefaultStoreLocate)
+	k.Put(StoreLocation, DefaultStoreLocate)
 	return k, nil
 }
 
