@@ -3,6 +3,7 @@ package StoreNode
 import (
 	"bnfs2/KVStore"
 	"bnfs2/interfaces"
+	messagequeue "bnfs2/messageQueue"
 	"bnfs2/network"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,6 +22,7 @@ func InitKvDBIfNotInit() {
 
 // writeSliceToLocal 将文件切片保存到本地存储
 func writeSliceToLocal(payLoad []byte) error {
+	// TODO: 按照扇区进行存储
 	storageDir, err := storeDb.Get(KVStore.StoreLocation)
 	if err != nil {
 		return err
@@ -59,6 +61,7 @@ func writeSliceToLocal(payLoad []byte) error {
 	if err := os.WriteFile(filePath, payLoad, 0644); err != nil {
 		return err
 	}
+
 	return nil
 }
 func StoreSlice(Node interfaces.Node) network.Handler {
@@ -70,6 +73,8 @@ func StoreSlice(Node interfaces.Node) network.Handler {
 			return err
 		}
 		// 开始将文件切片进行广播
+		// TODO: 写入完成后推入mq进行广播，进行区块广播以及扇区哈希计算
+		messagequeue.MQ.PushMessage(messagequeue.MessageBroadcast, messagequeue.MqMessage{Data: message.Payload})
 		return nil
 	}
 }
