@@ -2,6 +2,7 @@ package DHTable
 
 import (
 	"bnfs2/interfaces"
+	"bnfs2/network"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -134,6 +135,9 @@ func (n *Node) Sign(data []byte) ([]byte, error) {
 	copy(signature[64-len(sBytes):64], sBytes)
 
 	return signature, nil
+}
+func (n *Node) GetStream() network.Stream {
+	return nil
 }
 
 // LastCalled 返回上次向上一级节点发送心跳包的时间

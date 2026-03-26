@@ -1,5 +1,8 @@
 package messagequeue
 
 type MqMessage struct {
-	Data interface{}
+	Data   []byte
+	PubKey string
+	Sign   []byte // 对Data的签名
+	flag   int    //
 }

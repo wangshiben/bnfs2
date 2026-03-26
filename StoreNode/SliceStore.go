@@ -74,7 +74,15 @@ func StoreSlice(Node interfaces.Node) network.Handler {
 		}
 		// 开始将文件切片进行广播
 		// TODO: 写入完成后推入mq进行广播，进行区块广播以及扇区哈希计算
-		messagequeue.MQ.PushMessage(messagequeue.MessageBroadcast, messagequeue.MqMessage{Data: message.Payload})
+		sign, err := Node.Sign(message.Payload)
+		if err != nil {
+			return err
+		}
+		messagequeue.MQ.PushMessage(messagequeue.MessageBroadcast, messagequeue.MqMessage{
+			Data:   message.Payload,
+			Sign:   sign,
+			PubKey: Node.Pubkey(),
+		})
 		return nil
 	}
 }

@@ -39,6 +39,7 @@ type DHTTable interface {
 
 	// 获取最接近目标 ID 的节点（最多 count 个）
 	FindClosest(targetId string, count int) []Node
+	GetBuketHead() []Node // 获取当前桶的头节点，以便分发切片
 
 	// 获取所有桶
 	GetBuckets() []KBucket

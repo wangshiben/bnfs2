@@ -271,6 +271,15 @@ func (d *DHTTableImpl) FindClosest(targetId string, count int) []interfaces.Node
 
 	return result
 }
+func (d *DHTTableImpl) GetBuketHead() []interfaces.Node {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	nodes := make([]interfaces.Node, len(d.buckets))
+	for i, bucket := range d.buckets {
+		nodes[i] = bucket.bucket.Head()
+	}
+	return nodes
+}
 
 func (d *DHTTableImpl) GetBuckets() []interfaces.KBucket {
 	d.mu.RLock()

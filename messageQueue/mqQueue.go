@@ -77,18 +77,16 @@ func (q *MqQueue) start() {
 			}
 		}()
 		for data := range q.queueChannel {
-			switch data.Code {
-			case -1:
+			if data.flag == -1 {
 				return
-			default:
-				q.addQueueData(data)
 			}
+			q.addQueueData(data)
 
 		}
 	}()
 }
 func (q *MqQueue) close() {
-	data := &MqMessage{Code: -1}
+	data := &MqMessage{flag: -1}
 	q.queueChannel <- data
 }
 func NewMqQueue(handler queuenHanlder) *MqQueue {

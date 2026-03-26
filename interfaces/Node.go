@@ -1,6 +1,7 @@
 package interfaces
 
 import (
+	"bnfs2/network"
 	"math/big"
 )
 
@@ -12,5 +13,5 @@ type Node interface {
 	LastCalled() int64               // 上次向上一级节点发送心跳包的时间
 	XOR(node *Node) (big.Int, error) // 计算这个节点与某个节点的XOR距离
 	UpdateLastSeen()
-	//GetStream()network.Stream
+	GetStream() network.Stream // 获取节点的连接(P2P打洞)
 }
