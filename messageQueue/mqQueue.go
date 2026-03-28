@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-type queuenHanlder func(data *MqMessage)
+type QueuenHanlder func(data *MqMessage)
 
 type MqQueue struct {
 	header       *queueItem      // 待处理队列头
 	tail         *queueItem      // 待处理队列尾
 	lock         sync.Mutex      // 锁
-	handler      queuenHanlder   // 处理函数
+	handler      QueuenHanlder   // 处理函数
 	queueChannel chan *MqMessage // 队列通道
 }
 type queueItem struct {
@@ -89,7 +89,7 @@ func (q *MqQueue) close() {
 	data := &MqMessage{flag: -1}
 	q.queueChannel <- data
 }
-func NewMqQueue(handler queuenHanlder) *MqQueue {
+func NewMqQueue(handler QueuenHanlder) *MqQueue {
 	res := &MqQueue{
 		handler:      handler,
 		queueChannel: make(chan *MqMessage),

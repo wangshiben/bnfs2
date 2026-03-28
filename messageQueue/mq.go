@@ -85,7 +85,7 @@ func (mq *MessageQueue) PushMessage(queueName string, message MqMessage) error {
 	return nil
 }
 
-func (mq *MessageQueue) On(queueName string, handler queuenHanlder) error {
+func (mq *MessageQueue) On(queueName string, handler QueuenHanlder) error {
 	mq.lock.Lock()
 	defer mq.lock.Unlock()
 	quens := mq.quens[queueName]

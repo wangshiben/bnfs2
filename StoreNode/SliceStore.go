@@ -5,11 +5,13 @@ import (
 	"bnfs2/interfaces"
 	messagequeue "bnfs2/messageQueue"
 	"bnfs2/network"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 var storeDb KVStore.KvDB
@@ -23,6 +25,7 @@ func InitKvDBIfNotInit() {
 // writeSliceToLocal 将文件切片保存到本地存储
 func writeSliceToLocal(payLoad []byte) error {
 	// TODO: 按照扇区进行存储
+	// TODO: 文件头应当附带节点信息以及对文件签名的信息
 	storageDir, err := storeDb.Get(KVStore.StoreLocation)
 	if err != nil {
 		return err
@@ -85,4 +88,37 @@ func StoreSlice(Node interfaces.Node) network.Handler {
 		})
 		return nil
 	}
+}
+
+func BroadcastSlice(LocalDHT interfaces.DHTTable) messagequeue.QueuenHanlder {
+	return func(data *messagequeue.MqMessage) {
+		heads := LocalDHT.GetBuketHead()
+		group := &sync.WaitGroup{}
+		for index, head := range heads {
+			group.Add(1)
+			go func(head interfaces.Node, index int) {
+				defer group.Done()
+				ctx := context.Background()
+				message := &network.Message{
+					Header: &network.Header{
+						RouteName:     "",
+						PayLoadLength: 0,
+						OriginData:    nil,
+					},
+					// 使用GRPC重构Payload
+					Payload: data.Data,
+				}
+				bytes, err := message.ParseToBytes()
+				if err != nil {
+					return
+				}
+				// 发送消息
+				head.GetStream().SendMessage(ctx, bytes)
+				// TODO: 接收响应，直到响应成功或者失败，如果失败，重新获取该桶的第一个节点(存活时间最长)
+
+			}(head, index)
+		}
+		group.Wait()
+	}
+
 }

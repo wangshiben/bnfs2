@@ -11,6 +11,7 @@ type KvDBImp struct {
 }
 
 const StoreLocation = "sliceLocation"
+const BaseStoreLocation = "baseStoreLocation"
 
 // New 创建一个新的 KvDB 实例
 // path: db 文件存储的路径
